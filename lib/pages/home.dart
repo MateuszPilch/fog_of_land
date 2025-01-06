@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
@@ -7,6 +9,18 @@ import 'package:polybool/polybool.dart' as pb;
 import 'package:flutter_map_location_marker/flutter_map_location_marker.dart';
 import 'package:sliding_up_panel/sliding_up_panel.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:geodesy/geodesy.dart';
+
+Future<String> get _localPath async {
+  final directory = await getApplicationDocumentsDirectory();
+  return directory.path;
+}
+
+Future<File> get _localFile async {
+  final path = await _localPath;
+  return File('$path/holepoints.json');
+}
 
 Future<Position> _determinePosition() async {
   bool serviceEnabled;
@@ -40,7 +54,7 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   MapController mapController = MapController();
   LatLng currentPosition = const LatLng(0.0, 0.0);
-
+  double area = 0;
   var mainPolygon = Polygon(points: [
     LatLng(-90, -180),
     LatLng(-90, 180),
@@ -51,7 +65,46 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
+    loadHolePointsList();
+  }
+
+  Future<void> loadHolePointsList() async {
+    try {
+      final file = await _localFile;
+
+      if (await file.exists()) {
+        final contents = await file.readAsString();
+        final decodedData = json.decode(contents);
+
+        mainPolygon.holePointsList?.clear();
+        mainPolygon.holePointsList?.addAll(decodedData.map<List<LatLng>>((list) {
+          return (list as List).map<LatLng>((point) {
+            return LatLng(point['latitude'], point['longitude']);
+          }).toList();
+        }));
+      }
+    } catch (e) {
+      debugPrint(e.toString());
+    }
+
     getCurrentLocation();
+  }
+
+  Future<void> saveHolePointsList() async {
+    try {
+      final file = await _localFile;
+
+      final jsonData = mainPolygon.holePointsList?.map((list) {
+        return list.map((latLng) => {
+          'latitude': latLng.latitude,
+          'longitude': latLng.longitude,
+        }).toList();
+      }).toList();
+
+      await file.writeAsString(jsonEncode(jsonData));
+    } catch (e) {
+      debugPrint(e.toString());
+    }
   }
 
   Future<void> getCurrentLocation() async {
@@ -60,9 +113,7 @@ class _HomePageState extends State<HomePage> {
       distanceFilter: 10,
     );
 
-    StreamSubscription<Position> positionStream =
-        Geolocator.getPositionStream(locationSettings: locationSettings)
-            .listen((Position position) {
+    Geolocator.getPositionStream(locationSettings: locationSettings).listen((Position position) {
       currentPosition = LatLng(position.latitude, position.longitude);
       combinePolygons(position);
     });
@@ -77,7 +128,7 @@ class _HomePageState extends State<HomePage> {
         mapController.camera.center, mapController.camera.zoom + zoomLevel);
   }
 
-  void combinePolygons(Position position) async {
+  void combinePolygons(Position position) {
     pb.Polygon tempPolygon = pb.Polygon(regions: [
       [
         pb.Coordinate(position.latitude - 0.0004, position.longitude - 0.0004),
@@ -93,6 +144,7 @@ class _HomePageState extends State<HomePage> {
           .map((latLng) => pb.Coordinate(latLng.latitude, latLng.longitude))
           .toList();
     }).toList());
+
     tempPolygon = tempPolygon.union(tempPolygon2);
 
     mainPolygon.holePointsList?.clear();
@@ -101,6 +153,9 @@ class _HomePageState extends State<HomePage> {
           .map((coordinates) => LatLng(coordinates.x, coordinates.y))
           .toList();
     }));
+    saveHolePointsList();
+
+    area = Geodesy().calculatePolygonArea(mainPolygon.holePointsList!.first);
   }
 
   @override
@@ -111,12 +166,12 @@ class _HomePageState extends State<HomePage> {
     );
     return Scaffold(
       body: SlidingUpPanel(
-        minHeight: MediaQuery.of(context).size.height * 0.075,
+        minHeight: MediaQuery.of(context).size.height * 0.1,
         maxHeight: MediaQuery.of(context).size.height * 0.75,
         parallaxEnabled: true,
         parallaxOffset: 0.5,
         borderRadius: radius,
-        panel: slindingUpPanel(),
+        panel: slindingPanel(),
         body: Stack(
           children: [
             FlutterMap(
@@ -149,7 +204,7 @@ class _HomePageState extends State<HomePage> {
             ),
             Container(
               padding: const EdgeInsets.all(8.0),
-              height: MediaQuery.of(context).size.height * 0.925,
+              height: MediaQuery.of(context).size.height * 0.9,
               child: Stack(
                 children: [
                   mapControlButtons(),
@@ -163,15 +218,32 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget slindingUpPanel() => Center(
-          child: Container(
-        width: 40,
-        height: 5,
-        decoration: BoxDecoration(
-          color: Colors.grey[300],
-          borderRadius: BorderRadius.circular(12),
+  Widget slindingPanel() => Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(children: [
+        Container(
+          width: 80,
+          height: 8,
+          decoration: BoxDecoration(
+            color: Colors.grey[300],
+            borderRadius: BorderRadius.circular(12),
+          ),
         ),
-      ));
+        const SizedBox(height: 16),
+         Center(
+          child: Text(
+            'Total area: ${area.toString()} m²',
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Colors.black87,
+                letterSpacing: 1.2,
+              ),
+          ),
+        ),
+      ]),
+    );
 
   Widget mapControlButtons() => Align(
         alignment: Alignment.bottomLeft,

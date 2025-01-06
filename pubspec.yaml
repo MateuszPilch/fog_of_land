@@ -43,6 +43,8 @@ dependencies:
   flutter_compass: ^0.8.0
   geolocator: ^13.0.1
   polybool: ^0.2.0
+  path_provider: ^2.1.5
+  geodesy: ^0.10.2
 
 dev_dependencies:
   flutter_test:
